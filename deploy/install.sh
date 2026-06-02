@@ -11,6 +11,10 @@ set -euo pipefail
 APP_DIR=/opt/pager
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# The PagerMon reader tees decoded pages here; the pager service reads them.
+PAGER_MIRROR_LOG=/var/log/pagermon/multimon.log
+PAGER_MIRROR_LOG_DIR="$(dirname "$PAGER_MIRROR_LOG")"
+
 # --- run as root -------------------------------------------------------------
 # We re-exec under sudo if not already root, so the script works whether the
 # user typed `sudo bash ...` or just `bash ...`.
@@ -85,7 +89,10 @@ if [[ ! -d "$APP_DIR/config" ]]; then
 else
   echo ">> Existing $APP_DIR/config kept (not overwritten)."
 fi
-mkdir -p "$APP_DIR/data/jobs" /var/log/pagermon
+mkdir -p "$APP_DIR/data/jobs"
+# The mirror log dir (/var/log/pagermon) is owned/permissioned later, when we
+# know which user runs the PagerMon reader (it writes the log; pager reads it).
+mkdir -p "$PAGER_MIRROR_LOG_DIR"
 
 echo ">> Creating virtualenv and installing Python deps..."
 python3 -m venv "$APP_DIR/venv"
@@ -93,7 +100,11 @@ python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install -r "$REPO_DIR/requirements.txt"
 
 echo ">> Setting ownership..."
-chown -R pager:pager "$APP_DIR" /var/log/pagermon
+chown -R pager:pager "$APP_DIR"
+# NOTE: /var/log/pagermon is intentionally NOT chowned to pager here — the
+# PagerMon reader (a different user) needs to write it. Ownership/permissions
+# for the mirror log are set when we patch the reader (see patch_reader), so
+# the writer can create it and pager can still read it.
 
 echo ">> Installing systemd unit and logrotate config..."
 cp "$REPO_DIR/deploy/pager.service" /etc/systemd/system/
@@ -114,7 +125,26 @@ echo ">> Logs:            journalctl -u pager -f"
 # pager only reads the mirror log; PagerMon must `tee` multimon-ng's output to
 # it. We can add that line to the user's reader.sh automatically (with a backup),
 # but only when we can actually prompt — a piped/non-interactive run is skipped.
-PAGER_MIRROR_LOG=/var/log/pagermon/multimon.log
+
+# Make the mirror log writable by the user that runs the reader, and readable by
+# pager. The reader runs as whoever owns reader.sh; we chown the dir+file to that
+# user with group=pager and mode 0750 (writer: rwx, pager: r-x via group).
+setup_mirror_log_perms() {
+  local reader="$1" owner
+  owner="$(stat -c '%U' "$reader" 2>/dev/null || true)"
+  if [[ -z "$owner" || "$owner" == "UNKNOWN" ]]; then
+    echo "!! Couldn't determine the owner of $reader; leaving $PAGER_MIRROR_LOG_DIR as-is." >&2
+    echo "   If the reader can't write the log, run:" >&2
+    echo "       sudo chown -R <reader-user>:pager $PAGER_MIRROR_LOG_DIR" >&2
+    return 1
+  fi
+  mkdir -p "$PAGER_MIRROR_LOG_DIR"
+  touch "$PAGER_MIRROR_LOG"                       # create now so tee -a + reads work immediately
+  chown "$owner:pager" "$PAGER_MIRROR_LOG_DIR" "$PAGER_MIRROR_LOG"
+  chmod 0750 "$PAGER_MIRROR_LOG_DIR"             # owner rwx, group (pager) r-x, others none
+  chmod 0640 "$PAGER_MIRROR_LOG"                 # owner rw, group (pager) r, others none
+  echo ">> Mirror log owned by '$owner' (writer) with group 'pager' (reader): $PAGER_MIRROR_LOG"
+}
 
 patch_reader() {
   local reader="$1"
@@ -169,7 +199,8 @@ patch_reader() {
     return 1
   fi
 
-  mkdir -p "$(dirname "$PAGER_MIRROR_LOG")"
+  # Make sure the reader's user can write the log and pager can read it.
+  setup_mirror_log_perms "$reader" || true
   echo ">> Added mirror line to $reader. Restart PagerMon's reader to apply."
   return 0
 }
