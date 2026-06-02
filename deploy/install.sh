@@ -115,7 +115,6 @@ echo ">> Logs:            journalctl -u pager -f"
 # it. We can add that line to the user's reader.sh automatically (with a backup),
 # but only when we can actually prompt — a piped/non-interactive run is skipped.
 PAGER_MIRROR_LOG=/var/log/pagermon/multimon.log
-TEE_LINE="  | tee -a $PAGER_MIRROR_LOG \\"
 
 patch_reader() {
   local reader="$1"
@@ -131,14 +130,16 @@ patch_reader() {
     return 0
   fi
 
-  # Find the pipeline line that feeds PagerMon's reader.js; we insert the tee
-  # immediately before it so multimon-ng's output is mirrored, then forwarded on.
+  # Find the line that *runs* PagerMon's reader.js. It's invoked as `node
+  # reader.js`, `./reader.js`, an absolute path, etc.; we insert a tee just
+  # before it so multimon-ng's output is mirrored, then forwarded on. Skip
+  # comment lines (a stock reader.sh documents the chain in `# node reader.js`
+  # comments — matching those would patch the wrong place).
   local anchor
-  anchor="$(grep -nE '\|[[:space:]]*node .*reader\.js' "$reader" | head -1 | cut -d: -f1)"
+  anchor="$(grep -nE 'reader\.js' "$reader" | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1)"
   if [[ -z "$anchor" ]]; then
-    echo "!! Couldn't find the 'node ... reader.js' line in $reader." >&2
-    echo "   Add this line just before it, by hand:" >&2
-    echo "       $TEE_LINE" >&2
+    echo "!! Couldn't find a line running 'reader.js' in $reader." >&2
+    echo "   Add a tee into the pipeline by hand (see reader/reader.sh)." >&2
     return 1
   fi
 
@@ -146,12 +147,18 @@ patch_reader() {
   cp -p "$reader" "$backup"
   echo ">> Backed up original to $backup"
 
-  # Insert the tee line just before the reader.js pipeline line. awk (not sed)
-  # so the literal text — including its trailing backslash continuation — is
-  # written verbatim with no escaping surprises.
+  # Insert a tee just before the reader.js line, matching the pipeline style:
+  #   - reader.js line starts with `|`  (leading-pipe / backslash-continued):
+  #         | tee -a LOG \
+  #   - otherwise the previous line carried a trailing `|`:
+  #         tee -a LOG |
+  # We pass the line number (not a regex) to awk so nothing needs escaping.
   local tmp="$reader.pager.tmp"
-  if awk -v tee="$TEE_LINE" '
-        !done && /\|[[:space:]]*node .*reader\.js/ { print tee; done=1 }
+  if awk -v at="$anchor" -v mlog="$PAGER_MIRROR_LOG" '
+        NR == at {
+          if ($0 ~ /^[[:space:]]*\|/) print "  | tee -a " mlog " \\"
+          else                        print "tee -a " mlog " |"
+        }
         { print }
       ' "$reader" > "$tmp" && bash -n "$tmp" 2>/dev/null; then
     cat "$tmp" > "$reader"   # preserve original perms/owner; just rewrite content
