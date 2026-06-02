@@ -1,0 +1,33 @@
+# Field extraction rules.
+#
+# Each message's Alpha text is tested against these patterns IN ORDER.
+# The first pattern that matches "wins" and its captured fields become the
+# fields available for placement on the PDF.
+#
+# Two authoring styles are supported and may be mixed:
+#   1. Plain regex with bare ( ) groups + a `groups:` map naming each group
+#      (group number -> field name). The parser expands these into named groups.
+#      This is what the web UI's "Assign groups -> fields" column produces.
+#   2. Python regex with named groups directly: (?P<name>...).
+#
+# Field names you place on the PDF (layout.json) should match the field names
+# below, plus the always-available built-ins:
+#     capcode, date, time, datetime, message  (the full raw Alpha text)
+#
+# Test and edit these live in the web UI ("Rules" tab) against real pages.
+
+rules:
+# CFS / MFS dispatch format, e.g.:
+#   MFS: *CFSRES INC:S0101 01/6/26 19:22 RESPOND TREE DOWN P1 : <location> MAP:,<mapref> ,== <description> :<units>:
+- name: CFS dispatch
+  pattern: 'INC:(\S+)\s+(\d{1,3}/\d{1,2}/\d{2,4})\s+(\d{1,2}:\d{2})\s+RESPOND\s+(.+?)\s+(P\d+)\s*:\s*(.+?)\s+MAP:,?(.+?)\s*,==\s*(.+?)\s*:\s*(.+?)\s*:\s*$'
+  groups:
+    '1': incident
+    '2': date
+    '3': time
+    '4': jobtype
+    '5': priority
+    '6': location
+    '7': mapref
+    '8': description
+    '9': units

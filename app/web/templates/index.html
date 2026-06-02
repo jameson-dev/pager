@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Jobs — Pager{% endblock %}
+{% block content %}
+<h2>Received Jobs</h2>
+
+<div id="fail-banner" class="banner danger-banner" style="display:none">
+  <span id="fail-text"></span>
+  <button id="retry-all">Retry all now</button>
+</div>
+
+<div class="row toolbar">
+  <button id="refresh">Refresh</button>
+  <label class="toggle"><input type="checkbox" id="alert-toggle"><span>Alert on new job (sound + notification)</span></label>
+  <button id="test-sound" class="small">Test sound</button>
+  <span id="live-pill" class="pill off">live: connecting…</span>
+  <details class="test-page">
+    <summary>Send test page</summary>
+    <div class="row">
+      <input id="test-capcode" placeholder="capcode (must be monitored)">
+      <input id="test-message" placeholder="message text" style="flex:2">
+      <button id="send-test">Send</button>
+    </div>
+    <span id="test-msg" class="muted"></span>
+  </details>
+</div>
+
+<div class="row filter-bar">
+  <input id="f-q" placeholder="Search message / fields…" style="flex:2">
+  <input id="f-capcode" placeholder="Capcode">
+  <input id="f-jobtype" placeholder="Job type">
+  <label class="filter-lbl">From <input type="date" id="f-from"></label>
+  <label class="filter-lbl">To <input type="date" id="f-to"></label>
+  <select id="f-printed">
+    <option value="">Any print status</option>
+    <option value="yes">Printed</option>
+    <option value="no">Not printed</option>
+    <option value="failed">Failed</option>
+  </select>
+  <button id="f-clear" class="small">Clear</button>
+  <a id="export-csv" class="small" href="/api/jobs.csv">Export CSV</a>
+  <span id="job-count" class="muted"></span>
+</div>
+
+<table id="jobs">
+  <thead>
+    <tr>
+      <th>ID</th><th>Received</th><th>Capcode</th><th>Type</th>
+      <th>Message</th><th>Printed</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+{% endblock %}
+{% block scripts %}<script src="/static/jobs.js"></script>{% endblock %}

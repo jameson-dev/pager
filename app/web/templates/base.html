@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Pager{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Pager</h1>
+    <nav>
+      <a href="/">Jobs</a>
+      <a href="/layout">PDF Layout</a>
+      <a href="/rules">Parsing Rules</a>
+      <a href="/settings">Settings</a>
+    </nav>
+    <div class="status-pills">
+      <div id="health-status" class="pill" title="Feed liveness">feed: …</div>
+      <div id="print-status" class="pill"></div>
+      <a id="logout-link" href="#" class="pill" style="display:none" title="Sign out">Sign out</a>
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/common.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

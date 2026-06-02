@@ -1,0 +1,38 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Virtualenvs ---
+.venv/
+venv/
+env/
+
+# --- Runtime data (jobs, generated PDFs, SQLite DB, logs) ---
+data/
+*.db
+*.log
+
+# --- Local / per-machine dev config (seeded by deploy/setup-dev.sh) ---
+config_local/
+
+# --- User-provided template PDFs (never commit these) ---
+template.pdf
+config/template.pdf
+**/templates/*.pdf
+
+# --- Secrets / local config that must not be shared ---
+# The shared-password hash + session secret live in config.yaml at runtime;
+# the committed config/config.yaml is a secret-free seed. Don't commit copies.
+*.secret
+.env
+.env.*
+
+# --- Claude Code / editor / OS cruft ---
+.claude/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

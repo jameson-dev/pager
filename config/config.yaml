@@ -1,0 +1,31 @@
+log_file: /var/log/pagermon/multimon.log
+output_dir: /opt/pager/data/jobs
+template_pdf: /opt/pager/config/template.pdf
+templates:
+- name: Default
+  path: /opt/pager/config/template.pdf
+active_template: Default
+database: /opt/pager/data/jobs.db
+global_print_enabled: false
+printer_name: ''
+host: 0.0.0.0
+port: 8080
+alert_enabled_default: true
+watchdog_stale_seconds: 3600
+retention_days: 90
+retention_delete_pdf: true
+retention_delete_rows: true
+capcodes:
+- code: '1234567'
+  label: Station 1 Dispatch
+  print_enabled: true
+  copies: 1
+- code: '1234568'
+  label: Station 1 Admin
+  print_enabled: false
+  copies: 1
+jobtypes:
+  TEST:
+    print_enabled: false
+  ADMIN:
+    print_enabled: false

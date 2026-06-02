@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}PDF Layout — Pager{% endblock %}
+{% block content %}
+<h2>PDF Layout Editor</h2>
+<p class="hint">
+  Drag fields onto the template preview to set where each piece of the page is
+  printed. Coordinates are PDF points (origin bottom-left). Click a field in the
+  list to edit its font/size. The <strong>Add field</strong> list only offers
+  fields your <a href="/rules">parsing rules</a> produce, plus the built-ins
+  (<code>date, time, datetime, capcode, message</code>).
+</p>
+
+<div class="layout-wrap">
+  <div id="canvas-wrap">
+    <img id="template-img" alt="template preview"
+         onerror="window.templateMissing && window.templateMissing();">
+    <div id="no-template" style="display:none">
+      <span>No template uploaded. Set <code>template_pdf</code> in Settings (and
+      install poppler for a preview image). You can still position fields on the
+      blank page below.</span>
+    </div>
+    <!-- Shapes (rects/lines) render below the field overlay. -->
+    <div id="shape-overlay"></div>
+    <div id="overlay"></div>
+    <!-- Alignment guide lines drawn while dragging (snapping). -->
+    <div id="guide-v" class="guide guide-v"></div>
+    <div id="guide-h" class="guide guide-h"></div>
+    <!-- Floating context toolbar for the selected field. -->
+    <div id="field-toolbar" class="field-toolbar" style="display:none">
+      <button id="tb-bold" title="Bold" class="tb-btn"><b>B</b></button>
+      <button id="tb-italic" title="Italic" class="tb-btn"><i>I</i></button>
+      <select id="tb-family" title="Font family" class="tb-select">
+        <option>Helvetica</option><option>Times</option><option>Courier</option>
+      </select>
+      <button id="tb-size-down" title="Smaller" class="tb-btn">A−</button>
+      <input id="tb-size" type="number" min="4" max="200" class="tb-size" title="Font size">
+      <button id="tb-size-up" title="Larger" class="tb-btn">A+</button>
+    </div>
+  </div>
+
+  <div class="side">
+    <!-- Compact tool strip: tools + add buttons. -->
+    <div class="tool-strip">
+      <div class="draw-tools">
+        <button id="tool-box" class="tool" title="Draw a box (click to toggle)">▭ Box</button>
+        <button id="tool-line" class="tool" title="Draw a line (click to toggle)">／ Line</button>
+        <button id="add-outline" class="tool" title="Add a full-page border">▢ Outline</button>
+      </div>
+      <div class="add-row">
+        <select id="new-field-name" title="Field to add"></select>
+        <button id="add-field" title="Add the selected field">+ Field</button>
+        <button id="add-custom-text" title="Add a static text label">+ Text</button>
+      </div>
+      <label class="toggle grid-toggle">
+        <input type="checkbox" id="grid-toggle" checked>
+        <span>Snap to grid</span>
+        <input type="number" id="grid-size" value="10" min="2" max="50" title="Grid size (PDF points)">
+        <span class="muted">pt</span>
+      </label>
+      <p class="hint" id="draw-hint" style="display:none">Click and drag on the page to draw. Esc to cancel.</p>
+      <p class="hint" id="fields-hint"></p>
+    </div>
+
+    <!-- Object list with a filter (All / Fields / Shapes). Click to select. -->
+    <div class="objects">
+      <div class="objects-head">
+        <div class="obj-filter">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="fields">Fields</button>
+          <button data-filter="shapes">Shapes</button>
+        </div>
+        <span id="object-count" class="muted"></span>
+      </div>
+      <label class="toggle obj-visibility">
+        <input type="checkbox" id="hide-fields">
+        <span>Hide fields on canvas (while editing shapes)</span>
+      </label>
+      <ul id="object-list"></ul>
+    </div>
+
+    <!-- Contextual edit panel for the selected FIELD. -->
+    <div id="field-edit" class="edit-panel" style="display:none">
+      <h3>Field: <span id="edit-name"></span></h3>
+      <label id="edit-text-row" style="display:none">Text
+        <input type="text" id="edit-text" placeholder="custom text to print">
+      </label>
+      <div class="xy-row">
+        <label>X <input type="number" id="edit-x"></label>
+        <label>Y <input type="number" id="edit-y"></label>
+      </div>
+      <label>Font
+        <select id="edit-family">
+          <option>Helvetica</option><option>Times</option><option>Courier</option>
+        </select>
+      </label>
+      <div class="style-row">
+        <button id="edit-bold" class="tb-btn" title="Bold"><b>B</b></button>
+        <button id="edit-italic" class="tb-btn" title="Italic"><i>I</i></button>
+        <span class="sep"></span>
+        <span id="align-row">
+          <button data-align="left" class="tb-btn" title="Align left">⬱</button>
+          <button data-align="center" class="tb-btn" title="Align center">≡</button>
+          <button data-align="right" class="tb-btn" title="Align right">⬲</button>
+        </span>
+      </div>
+      <div class="xy-row">
+        <label>Size <input type="number" id="edit-size"></label>
+        <label>Max width <input type="number" id="edit-maxw"></label>
+      </div>
+    </div>
+
+    <!-- Contextual edit panel for the selected SHAPE. -->
+    <div id="shape-edit" class="edit-panel" style="display:none">
+      <h3>Shape <span id="shape-kind" class="muted"></span></h3>
+      <label>Name <input type="text" id="shape-name" placeholder="e.g. Header band"></label>
+      <label class="row-inline">Stroke
+        <input type="color" id="shape-stroke" value="#000000">
+        <input type="number" id="shape-stroke-w" min="0" max="20" step="0.5" value="1" title="Stroke width (pt)">
+        <span class="muted">pt</span>
+      </label>
+      <label class="row-inline" id="shape-fill-row">Fill
+        <input type="color" id="shape-fill" value="#dddddd">
+        <label class="toggle"><input type="checkbox" id="shape-fill-on"><span>filled</span></label>
+      </label>
+      <label class="row-inline" id="shape-opacity-row">Opacity
+        <input type="range" id="shape-opacity" min="0" max="100" value="100">
+        <span id="shape-opacity-val" class="muted">100%</span>
+      </label>
+      <button id="shape-delete" class="danger">Delete shape</button>
+    </div>
+
+    <div class="save-bar">
+      <button id="save-layout" class="primary">Save layout</button>
+      <span id="save-msg"></span>
+    </div>
+
+    <details class="preview-block">
+      <summary>Preview</summary>
+      <p class="hint">Render the current layout against a sample message.</p>
+      <input id="preview-msg" placeholder="sample message">
+      <button id="preview-btn">Open preview PDF</button>
+    </details>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/layout.js"></script>{% endblock %}

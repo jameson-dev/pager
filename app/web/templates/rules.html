@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Parsing Rules — Pager{% endblock %}
+{% block content %}
+<h2>Parsing Rules</h2>
+<p class="hint">
+  Rules run top-to-bottom; the <strong>first match wins</strong>. Write a normal regex and wrap
+  the parts you want to capture in plain <code>( )</code> groups — then, in the
+  <strong>Assign groups → fields</strong> column, pick which field each group becomes
+  (e.g. group <code>1</code> → <em>incident</em>). You don't need the
+  <code>(?P&lt;name&gt;...)</code> syntax; it's added for you. Edits are tested live;
+  nothing is applied until you <strong>Save rules</strong>.
+</p>
+
+<div class="card test-card">
+  <label class="block">Sample pager message
+    <input id="test-msg" style="width:100%"
+           value="MFS: *CFSRES INC:S0101 01/6/26 19:22 RESPOND TREE DOWN P1 : APPROX 500M EAST OF JUBILEE HWY ROUNDABOUT MOUNT GAMBIER MAP:,MGB 122D 2210 ,== TREE PARTIALLY OVER ROAD, WEST BOUND SIDE :MTG20_12:">
+  </label>
+
+  <div class="test-preview-label">
+    Match preview <span class="muted" id="winner-label"></span>
+  </div>
+  <!-- The message with the winning rule's capture groups highlighted inline. -->
+  <div id="match-preview" class="match-preview"></div>
+
+  <details class="diag-details" open>
+    <summary>Per-rule diagnostics</summary>
+    <ul id="diag-list" class="diag-list"></ul>
+  </details>
+</div>
+
+<table id="rules-table">
+  <thead><tr>
+    <th style="width:2.2rem"></th>
+    <th>Name</th><th>Pattern</th><th>Assign groups → fields</th><th></th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+<div class="row">
+  <button id="add-rule">Add rule</button>
+  <button id="save-rules" class="primary">Save rules</button>
+  <span id="rules-msg"></span>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/rules.js"></script>{% endblock %}

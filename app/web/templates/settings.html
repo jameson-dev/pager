@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Settings — Pager{% endblock %}
+{% block content %}
+<h2>Settings</h2>
+
+<!-- ============================ PRINTING ============================ -->
+<div class="settings-group">
+  <h3 class="group-title">Printing</h3>
+  <p class="group-hint">Control whether and where jobs print, and which capcodes
+     and job types are allowed to print.</p>
+
+  <section class="card">
+    <h3>General</h3>
+    <label class="toggle">
+      <input type="checkbox" id="global-print">
+      <span>Global printing enabled</span>
+    </label>
+    <p class="hint">Master switch. A job prints only if this is on <em>and</em> its
+       capcode is enabled <em>and</em> its job type is enabled.</p>
+
+    <label>Active printer
+      <select id="printer-select"></select>
+    </label>
+    <button id="discover-btn">Discover network printers</button>
+    <div id="discover-out"></div>
+  </section>
+
+  <section class="card">
+    <h3>Monitored Capcodes</h3>
+    <p class="hint">Only pages from these capcodes are processed. The <strong>alias</strong>
+       is a friendly name shown in notifications, the Jobs list, and on the PDF (as the
+       <code>capcode_alias</code> field). Per-capcode print toggle and copy count combine
+       with the global switch.</p>
+    <table id="capcode-table">
+      <thead><tr><th>Capcode</th><th>Alias</th><th>Print / copies</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button id="add-capcode">Add capcode</button>
+  </section>
+
+  <section class="card">
+    <h3>Job-type Print Rules</h3>
+    <p class="hint">Mute printing for specific job types (matched from the
+       <code>jobtype</code> field). Types not listed default to printing enabled.</p>
+    <table id="jobtype-table">
+      <thead><tr><th>Job type</th><th>Print</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button id="add-jobtype">Add job type</button>
+  </section>
+</div>
+
+<!-- ============================ TEMPLATES ============================ -->
+<div class="settings-group">
+  <h3 class="group-title">Templates</h3>
+  <p class="group-hint">The PDF that fields are stamped onto. Upload one or more
+     and choose the active template.</p>
+
+  <section class="card">
+    <label>Active template
+      <select id="active-template"></select>
+    </label>
+    <table id="template-table">
+      <thead><tr><th>Name</th><th>PDF path</th><th>File</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button id="add-template">Add template</button>
+    <button id="upload-template" class="primary">Upload new template PDF</button>
+    <p class="hint">Uploaded PDFs are stored on the server under
+       <code>&lt;config&gt;/templates/</code>. Remember to <strong>Save settings</strong>
+       after uploading or selecting the active template.</p>
+  </section>
+</div>
+
+<!-- ====================== ALERTS & RELIABILITY ====================== -->
+<div class="settings-group">
+  <h3 class="group-title">Alerts &amp; Reliability</h3>
+  <p class="group-hint">New-job notifications, the feed watchdog, and automatic
+     cleanup of old jobs.</p>
+
+  <section class="card">
+    <h3>Alerts &amp; Watchdog</h3>
+    <label class="toggle">
+      <input type="checkbox" id="alert-default">
+      <span>New-job alert enabled by default (each browser can override locally)</span>
+    </label>
+    <label>Feed considered "stale" after (seconds)
+      <input type="number" id="watchdog-seconds" min="60" step="60">
+    </label>
+    <label>Alert webhook URL (optional)
+      <input id="webhook-url" placeholder="https://… (Slack/Discord/ntfy)" style="width:100%">
+    </label>
+    <p class="hint">If set, a JSON POST is sent when a print fails permanently or the
+       feed goes stale — so problems are noticed without a browser tab open.</p>
+  </section>
+
+  <section class="card">
+    <h3>Retention</h3>
+    <p class="hint">Automatically delete old jobs. Runs daily and on startup.</p>
+    <label>Keep jobs for (days, 0 = forever) <input type="number" id="retention-days" min="0"></label>
+    <label class="toggle"><input type="checkbox" id="retention-pdf"><span>Delete PDF files</span></label>
+    <label class="toggle"><input type="checkbox" id="retention-rows"><span>Delete history rows</span></label>
+    <button id="run-cleanup">Run cleanup now</button>
+    <span id="cleanup-msg" class="muted"></span>
+  </section>
+</div>
+
+<!-- ============================ SYSTEM ============================ -->
+<div class="settings-group">
+  <h3 class="group-title">System</h3>
+  <p class="group-hint">File locations used by the watcher and output.</p>
+
+  <section class="card">
+    <h3>Paths &amp; Time</h3>
+    <label>Log file <input id="log-file"></label>
+    <label>Output dir <input id="output-dir"></label>
+    <label>Poppler bin dir (optional; for PDF preview if not on PATH)
+      <input id="poppler-path" placeholder="e.g. C:\poppler\Library\bin">
+      <span id="poppler-state" class="muted"></span>
+    </label>
+    <label>Timezone (IANA name, blank = server local)
+      <input id="timezone" placeholder="e.g. Australia/Adelaide" list="tz-list">
+    </label>
+    <datalist id="tz-list">
+      <option>Australia/Adelaide</option><option>Australia/Sydney</option>
+      <option>Australia/Perth</option><option>Australia/Brisbane</option>
+      <option>Pacific/Auckland</option><option>Europe/London</option>
+      <option>America/New_York</option><option>America/Los_Angeles</option>
+      <option>UTC</option>
+    </datalist>
+    <p class="hint">Sets the timezone for the <code>date</code>/<code>time</code>/<code>datetime</code>
+       fields stamped on PDFs and shown in alerts.</p>
+  </section>
+
+  <section class="card">
+    <h3>Access Password</h3>
+    <p class="hint">A single shared password blocks all access to the site until
+       entered. <span id="auth-state" class="muted"></span></p>
+    <label id="current-pw-row" style="display:none">Current password
+      <input type="password" id="current-password" autocomplete="off">
+    </label>
+    <label>New password (leave blank to disable)
+      <input type="password" id="new-password" autocomplete="new-password">
+    </label>
+    <button id="save-password">Save password</button>
+    <span id="password-msg" class="muted"></span>
+  </section>
+
+  <section class="card">
+    <h3>Backup &amp; Restore</h3>
+    <p class="hint">Export your config, parsing rules, and PDF layout as a single
+       JSON file, or restore from one. (Template PDF <em>files</em> are not included —
+       re-upload those after a restore.)</p>
+    <a class="btn-link" href="/api/settings/export" download>Export settings</a>
+    <button id="import-settings">Import settings…</button>
+    <span id="backup-msg" class="muted"></span>
+  </section>
+</div>
+
+<div class="save-bar">
+  <button id="save-settings" class="primary">Save settings</button>
+  <span id="settings-msg"></span>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/settings.js"></script>{% endblock %}

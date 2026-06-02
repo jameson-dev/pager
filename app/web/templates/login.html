@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Pager</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <form id="login-form" class="login-card">
+    <h1>Pager</h1>
+    <p class="hint">Enter the password to continue.</p>
+    <input type="password" id="password" placeholder="Password" autofocus autocomplete="current-password">
+    <button type="submit" class="primary">Sign in</button>
+    <div id="login-err" class="err-text"></div>
+  </form>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const next = params.get("next") || "/";
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("login-err");
+      err.textContent = "";
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("password").value, next }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Sign in failed");
+        location.href = data.next || "/";
+      } catch (ex) {
+        err.textContent = ex.message;
+        document.getElementById("password").select();
+      }
+    });
+  </script>
+</body>
+</html>

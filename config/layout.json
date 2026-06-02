@@ -1,0 +1,14 @@
+{
+  "page_width": 595,
+  "page_height": 842,
+  "fields": [
+    { "name": "date",     "x": 90,  "y": 780, "font": "Helvetica-Bold", "size": 12, "max_width": 200 },
+    { "name": "time",     "x": 300, "y": 780, "font": "Helvetica-Bold", "size": 12, "max_width": 150 },
+    { "name": "jobtype",  "x": 90,  "y": 740, "font": "Helvetica-Bold", "size": 16, "max_width": 400 },
+    { "name": "address",  "x": 90,  "y": 700, "font": "Helvetica",      "size": 14, "max_width": 450 },
+    { "name": "details",  "x": 90,  "y": 600, "font": "Helvetica",      "size": 11, "max_width": 450 },
+    { "name": "mapref",   "x": 90,  "y": 560, "font": "Helvetica",      "size": 11, "max_width": 200 },
+    { "name": "units",    "x": 90,  "y": 520, "font": "Helvetica",      "size": 11, "max_width": 450 },
+    { "name": "capcode",  "x": 450, "y": 30,  "font": "Helvetica",      "size": 8,  "max_width": 120 }
+  ]
+}
