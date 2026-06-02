@@ -110,6 +110,77 @@ echo ">> Done. Web UI: http://<this-host>:8080"
 echo ">> Service status:  systemctl status pager"
 echo ">> Logs:            journalctl -u pager -f"
 
+# --- offer to patch the PagerMon reader.sh -----------------------------------
+# pager only reads the mirror log; PagerMon must `tee` multimon-ng's output to
+# it. We can add that line to the user's reader.sh automatically (with a backup),
+# but only when we can actually prompt — a piped/non-interactive run is skipped.
+PAGER_MIRROR_LOG=/var/log/pagermon/multimon.log
+TEE_LINE="  | tee -a $PAGER_MIRROR_LOG \\"
+
+patch_reader() {
+  local reader="$1"
+
+  if [[ ! -f "$reader" ]]; then
+    echo "!! $reader not found — skipping. Add the tee line by hand (see reader/reader.sh)." >&2
+    return 1
+  fi
+
+  # Idempotent: if it already mirrors to our log, there's nothing to do.
+  if grep -qF "tee -a $PAGER_MIRROR_LOG" "$reader"; then
+    echo ">> $reader already mirrors to $PAGER_MIRROR_LOG — no change needed."
+    return 0
+  fi
+
+  # Find the pipeline line that feeds PagerMon's reader.js; we insert the tee
+  # immediately before it so multimon-ng's output is mirrored, then forwarded on.
+  local anchor
+  anchor="$(grep -nE '\|[[:space:]]*node .*reader\.js' "$reader" | head -1 | cut -d: -f1)"
+  if [[ -z "$anchor" ]]; then
+    echo "!! Couldn't find the 'node ... reader.js' line in $reader." >&2
+    echo "   Add this line just before it, by hand:" >&2
+    echo "       $TEE_LINE" >&2
+    return 1
+  fi
+
+  local backup="$reader.bak.$(date +%Y%m%d%H%M%S)"
+  cp -p "$reader" "$backup"
+  echo ">> Backed up original to $backup"
+
+  # Insert the tee line just before the reader.js pipeline line. awk (not sed)
+  # so the literal text — including its trailing backslash continuation — is
+  # written verbatim with no escaping surprises.
+  local tmp="$reader.pager.tmp"
+  if awk -v tee="$TEE_LINE" '
+        !done && /\|[[:space:]]*node .*reader\.js/ { print tee; done=1 }
+        { print }
+      ' "$reader" > "$tmp" && bash -n "$tmp" 2>/dev/null; then
+    cat "$tmp" > "$reader"   # preserve original perms/owner; just rewrite content
+    rm -f "$tmp"
+  else
+    echo "!! Patch produced a broken script; left $reader untouched (backup: $backup)." >&2
+    rm -f "$tmp"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$PAGER_MIRROR_LOG")"
+  echo ">> Added mirror line to $reader. Restart PagerMon's reader to apply."
+  return 0
+}
+
+READER_PATCHED=0
+DEFAULT_READER=/opt/pagermon/reader/reader.sh
+if [[ -t 0 ]]; then
+  echo
+  read -r -p ">> Patch your PagerMon reader.sh to mirror pages to $PAGER_MIRROR_LOG? [y/N] " reply
+  if [[ "$reply" =~ ^[Yy] ]]; then
+    read -r -p "   Path to reader.sh [$DEFAULT_READER]: " reader_path
+    reader_path="${reader_path:-$DEFAULT_READER}"
+    patch_reader "$reader_path" && READER_PATCHED=1
+  fi
+else
+  echo ">> Non-interactive run: skipping reader.sh patch (edit it by hand — see reader/reader.sh)."
+fi
+
 # Open the UI port on firewalld-based distros (Fedora/RHEL), which block it by
 # default. Best-effort: skip silently if firewalld isn't in use.
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state &>/dev/null; then
@@ -120,6 +191,10 @@ fi
 echo
 echo ">> Next steps:"
 echo "   1. Put your template PDF at $APP_DIR/config/template.pdf (or set path in Settings)."
-echo "   2. Edit your PagerMon reader.sh to add the 'tee -a /var/log/pagermon/multimon.log' line"
-echo "      (see reader/reader.sh in this repo for the exact change)."
+if [[ "$READER_PATCHED" -eq 1 ]]; then
+  echo "   2. Restart your PagerMon reader so the new 'tee' line takes effect."
+else
+  echo "   2. Edit your PagerMon reader.sh to add the 'tee -a $PAGER_MIRROR_LOG' line"
+  echo "      (see reader/reader.sh in this repo for the exact change)."
+fi
 echo "   3. Add a network printer + capcodes in the web UI."
