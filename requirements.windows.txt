@@ -3,6 +3,9 @@ uvicorn[standard]==0.30.1
 jinja2==3.1.4
 python-multipart==0.0.9
 pydantic==2.7.4
+# Lets pydantic/FastAPI evaluate PEP 604 `X | None` annotations on Python 3.9
+# (the app uses that syntax). No-op / not installed on Python 3.10+.
+eval_type_backport==0.2.0; python_version < "3.10"
 PyYAML==6.0.1
 pypdf==4.2.0
 reportlab==4.2.0
