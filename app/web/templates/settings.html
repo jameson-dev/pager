@@ -61,10 +61,9 @@
       <select id="active-template"></select>
     </label>
     <table id="template-table">
-      <thead><tr><th>Name</th><th>PDF path</th><th>File</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>PDF</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
-    <button id="add-template">Add template</button>
     <button id="upload-template" class="primary">Upload new template PDF</button>
     <p class="hint">Uploaded PDFs are stored on the server under
        <code>&lt;config&gt;/templates/</code>. Remember to <strong>Save settings</strong>
@@ -111,25 +110,90 @@
   <p class="group-hint">File locations used by the watcher and output.</p>
 
   <section class="card">
+    <h3>Ingest source</h3>
+    <p class="hint">Where pages come from. <b>Log file</b> tails multimon-ng's
+       output; <b>PagerMon database</b> reads PagerMon's own SQLite
+       <code>messages.db</code> directly (read-only) and adapts to its schema.</p>
+    <label>Source
+      <select id="ingest-source">
+        <option value="log">Log file (multimon.log)</option>
+        <option value="pagermon_db">PagerMon database (messages.db)</option>
+      </select>
+    </label>
+
+    <div id="pagermon-db-panel" style="display:none">
+      <label>PagerMon database path
+        <input id="pagermon-db-path" placeholder="e.g. /opt/pagermon/server/messages.db">
+      </label>
+      <button id="probe-db" type="button">Probe database</button>
+      <span id="probe-msg" class="muted"></span>
+      <div id="probe-result" class="hint" style="margin-top:.5rem"></div>
+
+      <details id="db-override" style="margin-top:.5rem">
+        <summary>Manual column mapping (only if auto-detect is wrong)</summary>
+        <p class="hint">Leave blank to use the auto-detected value shown above.</p>
+        <label>Table <input id="map-table" placeholder="messages"></label>
+        <label>Capcode column <input id="map-capcode" placeholder="address"></label>
+        <label>Message column <input id="map-message" placeholder="message"></label>
+        <label>Timestamp column <input id="map-timestamp" placeholder="timestamp"></label>
+        <label>Timestamp kind
+          <select id="map-timestamp-kind">
+            <option value="">auto-detect</option>
+            <option value="seconds">epoch seconds</option>
+            <option value="millis">epoch milliseconds</option>
+            <option value="iso">ISO / text string</option>
+          </select>
+        </label>
+      </details>
+    </div>
+  </section>
+
+  <section class="card">
     <h3>Paths &amp; Time</h3>
     <label>Log file <input id="log-file"></label>
     <label>Output dir <input id="output-dir"></label>
+    <label>Database file (job history SQLite)
+      <input id="database" placeholder="data/jobs.db">
+      <span class="hint">Applies on restart.</span>
+    </label>
     <label>Poppler bin dir (optional; for PDF preview if not on PATH)
       <input id="poppler-path" placeholder="e.g. C:\poppler\Library\bin">
       <span id="poppler-state" class="muted"></span>
     </label>
-    <label>Timezone (IANA name, blank = server local)
-      <input id="timezone" placeholder="e.g. Australia/Adelaide" list="tz-list">
+    <label>Timezone (blank = server local)
+      <select id="timezone">
+        <option value="">(server local time)</option>
+        <option value="Australia/Adelaide">Australia/Adelaide</option>
+        <option value="Australia/Sydney">Australia/Sydney</option>
+        <option value="Australia/Melbourne">Australia/Melbourne</option>
+        <option value="Australia/Brisbane">Australia/Brisbane</option>
+        <option value="Australia/Perth">Australia/Perth</option>
+        <option value="Australia/Darwin">Australia/Darwin</option>
+        <option value="Australia/Hobart">Australia/Hobart</option>
+        <option value="Pacific/Auckland">Pacific/Auckland</option>
+        <option value="Europe/London">Europe/London</option>
+        <option value="Europe/Paris">Europe/Paris</option>
+        <option value="America/New_York">America/New_York</option>
+        <option value="America/Chicago">America/Chicago</option>
+        <option value="America/Denver">America/Denver</option>
+        <option value="America/Los_Angeles">America/Los_Angeles</option>
+        <option value="UTC">UTC</option>
+      </select>
     </label>
-    <datalist id="tz-list">
-      <option>Australia/Adelaide</option><option>Australia/Sydney</option>
-      <option>Australia/Perth</option><option>Australia/Brisbane</option>
-      <option>Pacific/Auckland</option><option>Europe/London</option>
-      <option>America/New_York</option><option>America/Los_Angeles</option>
-      <option>UTC</option>
-    </datalist>
     <p class="hint">Sets the timezone for the <code>date</code>/<code>time</code>/<code>datetime</code>
        fields stamped on PDFs and shown in alerts.</p>
+  </section>
+
+  <section class="card">
+    <h3>Print retry</h3>
+    <p class="hint">How a failed print is retried by the background worker before
+       it's given up on (and an alert is sent).</p>
+    <label>Max attempts
+      <input type="number" id="print-max-attempts" min="1" step="1" placeholder="5">
+    </label>
+    <label>Retry interval (seconds)
+      <input type="number" id="print-retry-interval" min="5" step="5" placeholder="60">
+    </label>
   </section>
 
   <section class="card">

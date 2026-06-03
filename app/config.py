@@ -54,6 +54,54 @@ def save_rules(data: dict) -> None:
         _write_yaml(RULES_PATH, data)
 
 
+# The built-in, non-deletable default template: a blank white page so a fresh
+# install can build a form from scratch in the editor without uploading a PDF.
+DEFAULT_TEMPLATE_NAME = "Blank (default)"
+DEFAULT_TEMPLATE_FILENAME = "blank_default.pdf"
+
+
+def ensure_default_template() -> None:
+    """Guarantee a blank built-in template exists, is registered, and is active
+    when nothing else is. Idempotent — safe to call on every startup.
+
+    The template file is (re)generated if absent; the config gains a protected
+    `templates` entry pointing at it. `protected: true` marks it as the one entry
+    the UI/API refuse to delete.
+    """
+    from . import pdfgen  # local import avoids a heavy import at module load
+
+    with _lock:
+        conf = _read_yaml(CONFIG_PATH)
+        blank_path = CONFIG_DIR / DEFAULT_TEMPLATE_FILENAME
+        if not blank_path.exists():
+            try:
+                pdfgen.make_blank_pdf(str(blank_path))
+            except Exception:  # noqa: BLE001  (don't block startup on this)
+                return
+
+        templates = list(conf.get("templates") or [])
+        existing = next((t for t in templates if t.get("name") == DEFAULT_TEMPLATE_NAME), None)
+        if existing is None:
+            # Put the default first so it's the obvious baseline in the picker.
+            templates.insert(0, {
+                "name": DEFAULT_TEMPLATE_NAME,
+                "path": str(blank_path),
+                "protected": True,
+            })
+        else:
+            existing["path"] = str(blank_path)
+            existing["protected"] = True
+
+        conf["templates"] = templates
+        # Adopt the default as active only when no (valid) active template is set.
+        active = conf.get("active_template")
+        names = {t.get("name") for t in templates}
+        if not active or active not in names:
+            conf["active_template"] = DEFAULT_TEMPLATE_NAME
+
+        _write_yaml(CONFIG_PATH, conf)
+
+
 def load_layout() -> dict:
     with _lock:
         with open(LAYOUT_PATH, "r", encoding="utf-8") as fh:

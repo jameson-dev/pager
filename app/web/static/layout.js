@@ -1211,13 +1211,14 @@ document.getElementById("preview-btn").addEventListener("click", async () => {
   window.open(URL.createObjectURL(blob), "_blank");
 });
 
-// No template image available: show a plain white page (sized to the layout
-// aspect ratio) so fields are still draggable on a correctly-scaled canvas.
+// No template image available (e.g. poppler not installed): show a plain white
+// page sized to the layout aspect ratio so fields are still draggable on a
+// correctly-scaled canvas. This is a normal working state — the built-in
+// default template IS a blank page — so no warning is shown.
 window.templateMissing = function () {
   img.removeAttribute("src");
   img.style.display = "none";
   wrap.classList.add("no-template"); // gives the wrap a white, page-shaped area
-  document.getElementById("no-template").style.display = "flex";
   renderBoxes();
 };
 

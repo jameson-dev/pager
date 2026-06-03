@@ -12,7 +12,7 @@
   <button id="refresh">Refresh</button>
   <label class="toggle"><input type="checkbox" id="alert-toggle"><span>Alert on new job (sound + notification)</span></label>
   <button id="test-sound" class="small">Test sound</button>
-  <span id="live-pill" class="pill off">live: connecting…</span>
+  <span id="live-pill" class="pill off"><span class="dot"></span>live: connecting…</span>
   <details class="test-page">
     <summary>Send test page</summary>
     <div class="row">
@@ -41,14 +41,6 @@
   <span id="job-count" class="muted"></span>
 </div>
 
-<table id="jobs">
-  <thead>
-    <tr>
-      <th>ID</th><th>Received</th><th>Capcode</th><th>Type</th>
-      <th>Message</th><th>Printed</th><th>Actions</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
+<ul id="jobs" class="feed" aria-live="polite"></ul>
 {% endblock %}
 {% block scripts %}<script src="/static/jobs.js"></script>{% endblock %}

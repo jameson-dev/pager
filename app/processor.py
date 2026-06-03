@@ -8,7 +8,7 @@ from pathlib import Path
 from . import config as cfg
 from . import events, pdfgen, printing
 from .database import JobStore
-from .parser import RawPage, apply_rules, build_field_context
+from .parser import RawPage, build_field_context, select_rule
 
 log = logging.getLogger("pager.processor")
 
@@ -72,10 +72,15 @@ def _do_print(conf: dict, pdf_path: str, capcode: str, title: str) -> tuple[bool
     return True, None
 
 
-def process_page(page: RawPage, store: JobStore, *, is_test: bool = False) -> dict | None:
+def process_page(page: RawPage, store: JobStore, *, is_test: bool = False,
+                 alias_override: str | None = None) -> dict | None:
     """
     Full pipeline for one page. Returns the stored job dict, or None if the
     capcode is not monitored.
+
+    `alias_override` lets an ingest source supply its own label (e.g. the
+    PagerMon DB already resolves the capcode alias); the configured label is
+    used as a fallback when it's not given.
     """
     conf = cfg.load_config()
     monitored = monitored_capcodes(conf)
@@ -86,9 +91,12 @@ def process_page(page: RawPage, store: JobStore, *, is_test: bool = False) -> di
     rules = cfg.load_rules().get("rules", [])
     layout = cfg.load_layout()
 
-    extracted, matched_rule = apply_rules(page.message, rules)
-    alias = (monitored.get(page.capcode) or {}).get("label") or None
+    extracted, matched_rule, match_reason = select_rule(page.message, rules)
+    alias = alias_override or (monitored.get(page.capcode) or {}).get("label") or None
     context = build_field_context(page, extracted, alias=alias, tz_name=conf.get("timezone"))
+    # Record how the rule was chosen (kept in the fields JSON — no schema change)
+    # so the Jobs list/detail can show why a page was routed the way it was.
+    context["_match_reason"] = match_reason
     jobtype = context.get("jobtype")
 
     # Render PDF.

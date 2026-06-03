@@ -18,6 +18,42 @@ function fmtAge(s) {
   return Math.round(s / 3600) + "h ago";
 }
 
+// Lightweight transient toast for confirmations (save, copy, reprint…).
+let _toastTimer = null;
+function toast(msg) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+window.toast = toast;
+
+// ---------------------------------------------------------------- theme toggle
+// light-dark() in CSS follows the OS by default; a manual override is stored in
+// localStorage and applied as data-theme on <html>.
+(function initTheme() {
+  const KEY = "pager_theme";
+  const root = document.documentElement;
+  const saved = localStorage.getItem(KEY);
+  if (saved === "light" || saved === "dark") root.dataset.theme = saved;
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    // Cycle: current effective theme -> the other one.
+    const effective = root.dataset.theme ||
+      (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = effective === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    localStorage.setItem(KEY, next);
+  });
+})();
+
 // Header print-status pill.
 async function refreshPrintPill() {
   const el = document.getElementById("print-status");

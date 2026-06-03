@@ -1,4 +1,4 @@
-const tbody = document.querySelector("#jobs tbody");
+const feed = document.getElementById("jobs");
 
 function esc(s) {
   return (s ?? "").toString().replace(/[&<>"]/g, c =>
@@ -28,6 +28,16 @@ function beep() {
     g.gain.setValueAtTime(0.0001, audioCtx.currentTime + 0.36);
     o.stop(audioCtx.currentTime + 0.37);
   } catch (e) { /* autoplay may be blocked until user interacts */ }
+}
+
+// The rule a job was routed to, with the selection reason as a tooltip.
+// Jobs with no matched rule are shown as "unmatched" (raw message was kept).
+function ruleCell(job) {
+  const reason = (job.fields && job.fields._match_reason) || "";
+  if (job.matched_rule) {
+    return `<span class="rule-chip" title="${esc(reason)}">${esc(job.matched_rule)}</span>`;
+  }
+  return `<span class="rule-chip none" title="${esc(reason || "no rule matched — stored with raw message only")}">unmatched</span>`;
 }
 
 // Friendly capcode alias (the configured label), falling back to the number.
@@ -67,15 +77,28 @@ function filterParams() {
 // new SSE jobs (otherwise they might not match the current filter).
 function filtersActive() { return [...filterParams().keys()].length > 0; }
 
-// ----------------------------------------------------------------- jobs table
+// ----------------------------------------------------------------- jobs feed
 async function load() {
   const p = filterParams();
   p.set("limit", "200");
-  const res = await api("GET", "/api/jobs?" + p.toString());
+  if (!feed.childElementCount) showSkeleton();
+  let res;
+  try {
+    res = await api("GET", "/api/jobs?" + p.toString());
+  } catch (e) {
+    feed.innerHTML = emptyState("⚠", "Couldn’t load jobs", esc(e.message));
+    return;
+  }
   const jobs = res.jobs || [];
-  tbody.innerHTML = "";
-  for (const j of jobs) tbody.appendChild(row(j));
-  bindReprint();
+  feed.innerHTML = "";
+  if (!jobs.length) {
+    feed.innerHTML = filtersActive()
+      ? emptyState("🔍", "No matching pages", "Try clearing or widening the filters.")
+      : emptyState("📟", "Waiting for pages…", "New dispatches will appear here the moment they arrive.");
+  } else {
+    for (const j of jobs) feed.appendChild(card(j));
+  }
+  bindCards();
   document.getElementById("job-count").textContent =
     `${jobs.length} shown of ${res.total} total`;
   // Keep the CSV export link in sync with the active filters.
@@ -83,42 +106,81 @@ async function load() {
   document.getElementById("export-csv").href = "/api/jobs.csv" + (csv.toString() ? "?" + csv : "");
 }
 
-function row(j) {
-  const tr = document.createElement("tr");
-  if (j.is_test) tr.classList.add("test-row");
+// Render one received page as a card. Headline = who (alias/capcode) + type;
+// body = the message people actually read; footer = metadata + actions.
+function card(j) {
+  const li = document.createElement("li");
+  li.className = "job-card";
+  if (j.is_test) li.classList.add("is-test");
+  if (j.print_failed && !j.printed) li.classList.add("is-failed");
   const alias = aliasFor(j);
+  const who = alias
+    ? `${esc(alias)} <span class="job-capnum">${esc(j.capcode)}</span>`
+    : esc(j.capcode);
   const printed = j.printed
-    ? '<span style="color:#4ade80">yes</span>'
+    ? '<span class="print-yes">✓ printed</span>'
     : (j.print_failed
-        ? `<span style="color:#f87171" title="${esc(j.print_error)}">failed (${j.print_attempts})</span>`
-        : "no");
-  tr.innerHTML = `
-    <td>${j.id}${j.is_test ? ' <span class="tag">TEST</span>' : ""}</td>
-    <td>${esc(j.received_at)}</td>
-    <td>${alias
-        ? `${esc(alias)}<div class="capcode-num">${esc(j.capcode)}</div>`
-        : esc(j.capcode)}</td>
-    <td>${esc(j.jobtype || "")}</td>
-    <td>${esc(j.message)}</td>
-    <td>${printed}</td>
-    <td>
-      ${j.pdf_path ? `<a href="/api/jobs/${j.id}/pdf" target="_blank">PDF</a>` : ""}
-      <button data-id="${j.id}" class="reprint small">Reprint</button>
-    </td>`;
-  return tr;
+        ? `<span class="print-fail" title="${esc(j.print_error)}">✕ failed (${j.print_attempts})</span>`
+        : '<span class="print-no">not printed</span>');
+  li.innerHTML = `
+    <div class="job-accent"></div>
+    <div class="job-body">
+      <div class="job-head">
+        <span class="job-who">${who}</span>
+        ${j.jobtype ? `<span class="job-type">${esc(j.jobtype)}</span>` : ""}
+        ${j.is_test ? '<span class="tag">TEST</span>' : ""}
+        <span class="job-time" title="${esc(j.received_at)}">${esc(j.received_at)}</span>
+      </div>
+      <p class="job-msg">${esc(j.message)}</p>
+      <div class="job-foot">
+        <span class="job-id">#${j.id}</span>
+        ${ruleCell(j)}
+        ${printed}
+        <span class="job-actions">
+          <button class="icon-btn copy-btn" data-copy="${esc(j.message)}" title="Copy message">⧉</button>
+          ${j.pdf_path ? `<a class="btn-link small" href="/api/jobs/${j.id}/pdf" target="_blank">PDF</a>` : ""}
+          <button data-id="${j.id}" class="reprint small">Reprint</button>
+        </span>
+      </div>
+    </div>`;
+  return li;
 }
 
-function bindReprint() {
-  tbody.querySelectorAll(".reprint").forEach(b =>
+function bindCards() {
+  feed.querySelectorAll(".reprint").forEach(b =>
     b.addEventListener("click", () => reprint(b.dataset.id)));
+  feed.querySelectorAll(".copy-btn").forEach(b =>
+    b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); toast("Message copied"); }
+      catch (e) { toast("Copy failed"); }
+    }));
+}
+
+// Placeholder shimmer cards while the first fetch lands.
+function showSkeleton(n = 4) {
+  feed.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const li = document.createElement("li");
+    li.className = "job-card skeleton";
+    li.innerHTML = `<div class="job-accent"></div><div class="job-body">
+      <div class="sk-line sk-head"></div><div class="sk-line sk-msg"></div>
+      <div class="sk-line sk-foot"></div></div>`;
+    feed.appendChild(li);
+  }
+}
+
+function emptyState(icon, title, sub) {
+  return `<li class="empty-state"><div class="empty-icon">${icon}</div>
+    <p class="empty-title">${title}</p><p class="empty-sub">${sub}</p></li>`;
 }
 
 async function reprint(id) {
   try {
     const r = await api("POST", `/api/jobs/${id}/reprint`);
-    if (!r.ok) alert("Failed: " + (r.error || "unknown"));
+    if (!r.ok) toast("Reprint failed: " + (r.error || "unknown"));
+    else toast(`Reprinted #${id}`);
     load();
-  } catch (e) { alert("Failed: " + e.message); }
+  } catch (e) { toast("Reprint failed: " + e.message); }
 }
 
 // ----------------------------------------------------------------- failed banner
@@ -153,7 +215,14 @@ function connectSSE() {
     // With filters active, prepending could insert a non-matching row; reload
     // instead so the list stays consistent with the filter.
     if (filtersActive()) load();
-    else { tbody.prepend(row(job)); bindReprint(); }
+    else {
+      const empty = feed.querySelector(".empty-state");
+      if (empty) feed.innerHTML = "";
+      const el = card(job);
+      el.classList.add("flash-in");   // accent pulse marks a freshly-arrived page
+      feed.prepend(el);
+      bindCards();
+    }
     if (alertEnabled()) { beep(); notify(job); }
   });
   es.addEventListener("print_status", e => refreshFailBanner(JSON.parse(e.data).failed));

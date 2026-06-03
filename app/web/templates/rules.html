@@ -3,12 +3,13 @@
 {% block content %}
 <h2>Parsing Rules</h2>
 <p class="hint">
-  Rules run top-to-bottom; the <strong>first match wins</strong>. Write a normal regex and wrap
-  the parts you want to capture in plain <code>( )</code> groups — then, in the
-  <strong>Assign groups → fields</strong> column, pick which field each group becomes
-  (e.g. group <code>1</code> → <em>incident</em>). You don't need the
-  <code>(?P&lt;name&gt;...)</code> syntax; it's added for you. Edits are tested live;
-  nothing is applied until you <strong>Save rules</strong>.
+  Rules run top-to-bottom; the <strong>first applicable match wins</strong>. Use
+  <strong>Keywords</strong> to pick which message format a rule is for — the rule only
+  applies when the message contains one of its keywords (comma-separated; leave blank to
+  consider the rule for every message). Then write a normal regex and wrap the parts you
+  want to capture in plain <code>( )</code> groups, and assign each group to a field. You
+  don't need the <code>(?P&lt;name&gt;...)</code> syntax; it's added for you. Edits are
+  tested live; nothing is applied until you <strong>Save rules</strong>.
 </p>
 
 <div class="card test-card">
@@ -32,7 +33,8 @@
 <table id="rules-table">
   <thead><tr>
     <th style="width:2.2rem"></th>
-    <th>Name</th><th>Pattern</th><th>Assign groups → fields</th><th></th>
+    <th>Name</th><th>Keywords<br><span class="th-hint">applies when message contains</span></th>
+    <th>Pattern</th><th>Assign groups → fields</th><th></th>
   </tr></thead>
   <tbody></tbody>
 </table>

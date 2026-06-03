@@ -99,14 +99,21 @@ function renderTemplates() {
   tb.innerHTML = "";
   conf.templates.forEach((t, i) => {
     const tr = document.createElement("tr");
+    const locked = !!t.protected;
+    // The PDF path is server-managed (uploads land in <config>/templates/), so
+    // it's shown read-only as a filename rather than an editable path field. The
+    // built-in default is fully locked and can't be re-uploaded or deleted.
+    const fileName = t.path ? t.path.replace(/\\/g, "/").split("/").pop() : "";
     tr.innerHTML = `
-      <td><input value="${(t.name ?? "").replace(/"/g, "&quot;")}" data-i="${i}" data-k="name" class="tpl-f"></td>
-      <td><input style="width:100%" value="${(t.path ?? "").replace(/"/g, "&quot;")}" data-i="${i}" data-k="path" class="tpl-f" placeholder="upload a PDF →"></td>
+      <td><input value="${(t.name ?? "").replace(/"/g, "&quot;")}" data-i="${i}" data-k="name" class="tpl-f"${locked ? " disabled" : ""}>${locked ? ' <span class="muted">built-in</span>' : ""}</td>
       <td>
-        <button data-upload="${i}" class="small">Upload PDF…</button>
-        <span class="tpl-upmsg" data-upmsg="${i}"></span>
+        ${locked ? '<span class="muted">blank white page</span>'
+                 : `<span class="tpl-file ${fileName ? "" : "muted"}" data-file="${i}">${fileName ? escapeHtml(fileName) : "no PDF yet"}</span>
+                    <button data-upload="${i}" class="small">${fileName ? "Replace…" : "Upload PDF…"}</button>
+                    <span class="tpl-upmsg" data-upmsg="${i}"></span>`}
       </td>
-      <td><button data-del="${i}" class="danger">✕</button></td>`;
+      <td>${locked ? '<span class="muted" title="The default template cannot be deleted">🔒</span>'
+                   : `<button data-del="${i}" class="danger">✕</button>`}</td>`;
     tb.appendChild(tr);
   });
   tb.querySelectorAll(".tpl-f").forEach(inp => inp.addEventListener("input", e => {
@@ -117,7 +124,10 @@ function renderTemplates() {
   tb.querySelectorAll("[data-upload]").forEach(b =>
     b.addEventListener("click", () => uploadTemplate(+b.dataset.upload)));
   tb.querySelectorAll("[data-del]").forEach(b =>
-    b.addEventListener("click", () => { conf.templates.splice(+b.dataset.del, 1); renderTemplates(); renderTemplateSelect(); }));
+    b.addEventListener("click", () => {
+      if (conf.templates[+b.dataset.del]?.protected) return;  // safety: never delete the default
+      conf.templates.splice(+b.dataset.del, 1); renderTemplates(); renderTemplateSelect();
+    }));
   renderTemplateSelect();
 }
 
@@ -161,12 +171,6 @@ function renderTemplateSelect() {
   sel.value = conf.active_template || (conf.templates[0] && conf.templates[0].name) || "";
 }
 
-document.getElementById("add-template").addEventListener("click", () => {
-  conf.templates = conf.templates || [];
-  conf.templates.push({ name: "Template " + (conf.templates.length + 1), path: "" });
-  renderTemplates();
-});
-
 // Upload straight into a fresh template row (name auto-filled from the file).
 document.getElementById("upload-template").addEventListener("click", () => {
   conf.templates = conf.templates || [];
@@ -207,7 +211,13 @@ function settingsPatch() {
     capcodes: conf.capcodes || [],
     jobtypes: conf.jobtypes || {},
     log_file: document.getElementById("log-file").value,
+    ingest_source: document.getElementById("ingest-source").value,
+    pagermon_db_path: document.getElementById("pagermon-db-path").value.trim(),
+    pagermon_db_mapping: dbMappingOverride(),
     output_dir: document.getElementById("output-dir").value,
+    database: document.getElementById("database").value.trim() || "data/jobs.db",
+    print_max_attempts: Number(document.getElementById("print-max-attempts").value) || 5,
+    print_retry_interval_seconds: Number(document.getElementById("print-retry-interval").value) || 60,
     templates: conf.templates || [],
     active_template: document.getElementById("active-template").value,
     alert_enabled_default: document.getElementById("alert-default").checked,
@@ -294,18 +304,109 @@ document.getElementById("save-password").addEventListener("click", async () => {
   } catch (e) { msg.textContent = "Error: " + e.message; msg.className = "err-text"; }
 });
 
+// --------------------------------------------------------------- ingest source
+function toggleIngestPanel() {
+  const isDb = document.getElementById("ingest-source").value === "pagermon_db";
+  document.getElementById("pagermon-db-panel").style.display = isDb ? "block" : "none";
+}
+
+function dbMappingOverride() {
+  // Only send keys the user actually filled — blanks mean "use auto-detect".
+  const m = {};
+  const t = document.getElementById("map-table").value.trim();          if (t) m.table = t;
+  const c = document.getElementById("map-capcode").value.trim();        if (c) m.capcode_col = c;
+  const msg = document.getElementById("map-message").value.trim();      if (msg) m.message_col = msg;
+  const ts = document.getElementById("map-timestamp").value.trim();     if (ts) m.timestamp_col = ts;
+  const tk = document.getElementById("map-timestamp-kind").value;       if (tk) m.timestamp_kind = tk;
+  return m;
+}
+
+function loadDbMappingOverride(m) {
+  document.getElementById("map-table").value = m.table || "";
+  document.getElementById("map-capcode").value = m.capcode_col || "";
+  document.getElementById("map-message").value = m.message_col || "";
+  document.getElementById("map-timestamp").value = m.timestamp_col || "";
+  document.getElementById("map-timestamp-kind").value = m.timestamp_kind || "";
+}
+
+async function probeDb() {
+  const msgEl = document.getElementById("probe-msg");
+  const out = document.getElementById("probe-result");
+  msgEl.textContent = "Probing…"; msgEl.className = "muted";
+  try {
+    const r = await api("POST", "/api/pagermon-db/probe", {
+      path: document.getElementById("pagermon-db-path").value.trim(),
+      mapping: dbMappingOverride(),
+    });
+    const m = r.mapping || {};
+    if (!m.detected) {
+      msgEl.textContent = "Not detected"; msgEl.className = "err-text";
+      out.innerHTML = `<span class="err-text">${escapeHtml(m.note || "Could not read database.")}</span>`;
+      return;
+    }
+    msgEl.textContent = "Detected ✓"; msgEl.className = "ok-text";
+    const labelSrc = m.alias_fk_col
+      ? `${m.capcodes_table}.${m.capcodes_label_col} (via ${m.alias_fk_col})`
+      : (m.alias_text_col || "— none —");
+    let html = `<b>Detected mapping</b><br>` +
+      `table <code>${escapeHtml(m.table)}</code>, ` +
+      `capcode <code>${escapeHtml(m.capcode_col)}</code>, ` +
+      `message <code>${escapeHtml(m.message_col)}</code>, ` +
+      `timestamp <code>${escapeHtml(m.timestamp_col || "-")}</code> ` +
+      `(<code>${escapeHtml(m.timestamp_kind)}</code>), ` +
+      `label ${escapeHtml(labelSrc)}`;
+    if (r.sample && r.sample.length) {
+      html += `<br><b>Recent rows:</b><ul style="margin:.3rem 0">` +
+        r.sample.map(s => `<li><code>${escapeHtml(s.capcode)}</code>` +
+          (s.alias ? ` (${escapeHtml(s.alias)})` : "") +
+          ` — ${escapeHtml(s.message)} <span class="muted">${escapeHtml(s.received_at)}</span></li>`).join("") +
+        `</ul>`;
+    } else {
+      html += `<br><span class="muted">No recent rows to sample.</span>`;
+    }
+    out.innerHTML = html;
+  } catch (e) {
+    msgEl.textContent = "Error"; msgEl.className = "err-text";
+    out.textContent = e.message;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+document.getElementById("ingest-source").addEventListener("change", toggleIngestPanel);
+document.getElementById("probe-db").addEventListener("click", probeDb);
+
 async function init() {
   conf = await api("GET", "/api/config");
   refreshAuthState();
   document.getElementById("global-print").checked = !!conf.global_print_enabled;
   document.getElementById("log-file").value = conf.log_file || "";
+  document.getElementById("ingest-source").value = (conf.ingest_source === "pagermon_db") ? "pagermon_db" : "log";
+  document.getElementById("pagermon-db-path").value = conf.pagermon_db_path || "";
+  loadDbMappingOverride(conf.pagermon_db_mapping || {});
+  toggleIngestPanel();
   document.getElementById("output-dir").value = conf.output_dir || "";
+  // database / retry defaults come pre-filled from /api/config (which supplies
+  // the effective default when the key is absent), so the form is never blank.
+  document.getElementById("database").value = conf.database || "data/jobs.db";
+  document.getElementById("print-max-attempts").value = conf.print_max_attempts ?? 5;
+  document.getElementById("print-retry-interval").value = conf.print_retry_interval_seconds ?? 60;
   document.getElementById("alert-default").checked = conf.alert_enabled_default !== false;
   document.getElementById("watchdog-seconds").value = conf.watchdog_stale_seconds || 3600;
   document.getElementById("retention-days").value = conf.retention_days ?? 0;
   document.getElementById("retention-pdf").checked = conf.retention_delete_pdf !== false;
   document.getElementById("retention-rows").checked = conf.retention_delete_rows !== false;
-  document.getElementById("timezone").value = conf.timezone || "";
+  // Timezone is a fixed <select>; if the saved value isn't a preset option, add
+  // it so the user's choice always stays shown (rather than snapping to blank).
+  const tzSel = document.getElementById("timezone");
+  const tz = conf.timezone || "";
+  if (tz && ![...tzSel.options].some(o => o.value === tz)) {
+    tzSel.add(new Option(tz, tz));
+  }
+  tzSel.value = tz;
   document.getElementById("webhook-url").value = conf.alert_webhook_url || "";
   document.getElementById("poppler-path").value = conf.poppler_path || "";
   refreshPopplerState();

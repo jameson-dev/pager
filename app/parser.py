@@ -177,15 +177,67 @@ def available_fields(rules: list[dict]) -> list[str]:
     return out
 
 
+def rule_keywords(rule: dict) -> list[str]:
+    """A rule's selector keywords (case-insensitive 'message contains' triggers).
+
+    Stored as `match_keywords`: a list of strings, or a single comma/newline-
+    separated string (tolerated for hand-edited configs). Empty = no selector,
+    meaning the rule is considered for every message (legacy behaviour)."""
+    kw = rule.get("match_keywords")
+    if kw is None:
+        return []
+    if isinstance(kw, str):
+        kw = re.split(r"[,\n]", kw)
+    return [k.strip() for k in kw if k and k.strip()]
+
+
+def keyword_hit(message: str, keywords: list[str]) -> str | None:
+    """The first keyword found in `message` (case-insensitive), else None."""
+    low = message.lower()
+    for k in keywords:
+        if k.lower() in low:
+            return k
+    return None
+
+
+def rule_applies(message: str, rule: dict) -> tuple[bool, str | None]:
+    """Does this rule's SELECTOR admit `message`? Returns (applies, reason).
+
+    A rule with keywords applies only when one is present; a rule with no
+    keywords applies to everything (so existing rules keep working). `reason`
+    explains the decision for display in the tester / job detail."""
+    keywords = rule_keywords(rule)
+    if not keywords:
+        return True, "no keywords (applies to all)"
+    hit = keyword_hit(message, keywords)
+    if hit is not None:
+        return True, f"matched keyword “{hit}”"
+    return False, None
+
+
 def apply_rules(message: str, rules: list[dict]) -> tuple[dict, str | None]:
     """
-    Run extraction rules in order; first match wins.
+    Choose a rule and extract its fields. A rule is chosen only if its SELECTOR
+    (keyword 'contains' test) admits the message AND its extraction regex matches;
+    the first such rule in order wins. Selection (keywords) is kept separate from
+    extraction (regex) so a page is routed by a cheap, reliable signal even when
+    the detailed extraction pattern is strict.
 
-    Returns (fields, matched_rule_name). `fields` is the dict of named groups.
-    If a rule defines `jobtype_default` and the match produced no `jobtype`,
-    the default is filled in.
+    Returns (fields, matched_rule_name). If no rule is chosen, returns ({}, None)
+    and the caller stores the page with built-in fields only (raw message kept).
     """
+    fields, name, _ = select_rule(message, rules)
+    return fields, name
+
+
+def select_rule(message: str, rules: list[dict]) -> tuple[dict, str | None, str | None]:
+    """Like apply_rules but also returns a human `reason` for how the rule was
+    chosen (or why nothing matched), for surfacing in the UI."""
+    saw_keyword_no_regex: str | None = None
     for rule in rules:
+        applies, _why = rule_applies(message, rule)
+        if not applies:
+            continue
         pattern = effective_pattern(rule)
         if not pattern:
             continue
@@ -198,8 +250,20 @@ def apply_rules(message: str, rules: list[dict]) -> tuple[dict, str | None]:
             fields = {k: (v.strip() if v else "") for k, v in m.groupdict().items()}
             if not fields.get("jobtype") and rule.get("jobtype_default"):
                 fields["jobtype"] = rule["jobtype_default"]
-            return fields, rule.get("name")
-    return {}, None
+            kws = rule_keywords(rule)
+            hit = keyword_hit(message, kws) if kws else None
+            reason = f"matched keyword “{hit}”" if hit else "matched (no keywords set)"
+            return fields, rule.get("name"), reason
+        # The keyword said "this is the right rule" but the regex didn't extract —
+        # remember it so we can explain a likely malformed page of a known format.
+        if saw_keyword_no_regex is None and rule_keywords(rule):
+            hit = keyword_hit(message, rule_keywords(rule))
+            if hit:
+                saw_keyword_no_regex = f"{rule.get('name') or 'a rule'} (keyword “{hit}”)"
+    if saw_keyword_no_regex:
+        return {}, None, (f"no rule extracted fields — {saw_keyword_no_regex} matched by "
+                          "keyword but its pattern didn't fit this message")
+    return {}, None, "no rule matched — stored with raw message only"
 
 
 def diagnose_rules(message: str, rules: list[dict]) -> dict:
@@ -228,6 +292,9 @@ def diagnose_rules(message: str, rules: list[dict]) -> dict:
         # Map each capturing group NUMBER -> assigned field name (for the editor's
         # "Group N -> field" dropdowns). Pre-named groups keep their own name.
         scanned = scan_capturing_groups(raw_pattern)
+        keywords = rule_keywords(rule)
+        applies, _why = rule_applies(message, rule)
+        kw_hit = keyword_hit(message, keywords) if keywords else None
         entry: dict = {
             "index": i,
             "name": rule.get("name") or f"rule {i + 1}",
@@ -237,6 +304,11 @@ def diagnose_rules(message: str, rules: list[dict]) -> dict:
             "groups": [],          # named-group spans (winning-match highlight)
             "capture_groups": [],  # numbered plain groups + assigned field (editor)
             "jobtype_default": rule.get("jobtype_default") or "",
+            # Selector (keyword) diagnostics, so the tester shows WHY a rule was
+            # (not) chosen, separate from whether its regex extracts.
+            "keywords": keywords,
+            "selector_applies": applies,
+            "keyword_hit": kw_hit,
         }
         if not pattern:
             results.append(entry)
@@ -251,7 +323,10 @@ def diagnose_rules(message: str, rules: list[dict]) -> dict:
 
         m = rx.search(message)
         if not m:
-            entry["status"] = "nomatch"
+            # Distinguish "selector excluded this rule" from "regex didn't match":
+            # a known-format page that's malformed shows up as keyword-hit but
+            # nomatch, which is the useful signal.
+            entry["status"] = "skipped" if not applies else "nomatch"
             # Even on no-match, expose the group numbers so dropdowns can render.
             for g in scanned:
                 entry["capture_groups"].append(
@@ -261,7 +336,9 @@ def diagnose_rules(message: str, rules: list[dict]) -> dict:
             results.append(entry)
             continue
 
-        entry["status"] = "match"
+        # The regex matches; but if the selector excludes this rule it's NOT the
+        # chosen one (it's reported as skipped, with its would-be captures shown).
+        entry["status"] = "skipped" if not applies else "match"
         entry["span"] = [m.start(), m.end()]
         # Per named-group spans (so the UI can highlight each capture).
         for name in rx.groupindex:
@@ -285,20 +362,24 @@ def diagnose_rules(message: str, rules: list[dict]) -> dict:
             })
         results.append(entry)
 
-        # First match wins — record the winner but keep diagnosing later rules
-        # so the author can still see what they would have matched.
-        if matched_index is None:
+        # First APPLICABLE match wins — record the winner but keep diagnosing
+        # later rules so the author can still see what they would have matched.
+        if matched_index is None and applies:
             matched_index = i
             winning_fields = {k: (v.strip() if v else "") for k, v in m.groupdict().items()}
             if not winning_fields.get("jobtype") and rule.get("jobtype_default"):
                 winning_fields["jobtype"] = rule["jobtype_default"]
             winning_name = rule.get("name")
 
+    # Overall, human-readable account of how the rule was chosen (or why not),
+    # matching what the live pipeline (select_rule) would decide.
+    _f, _n, selection_reason = select_rule(message, rules)
     return {
         "message": message,
         "matched_index": matched_index,
         "matched_rule": winning_name,
         "fields": winning_fields,
+        "selection_reason": selection_reason,
         "rules": results,
     }
 

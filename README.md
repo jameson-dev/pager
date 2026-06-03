@@ -55,16 +55,34 @@ missing.
 
 ### Hook into PagerMon
 
-Add the `tee` line to your existing PagerMon `reader.sh` so multimon-ng's output
-is mirrored to the watched log. See [reader/reader.sh](reader/reader.sh) — the
-only added piece is:
+There are two ways to feed Pager. Pick one in **Settings → Ingest source**.
+
+**A. Tail the multimon log (default).** Add the `tee` line to your existing
+PagerMon `reader.sh` so multimon-ng's output is mirrored to the watched log. See
+[reader/reader.sh](reader/reader.sh) — the only added piece is:
 
 ```bash
 | tee -a /var/log/pagermon/multimon.log \
 ```
 
-Pager and PagerMon run side by side; Pager only *reads* the mirror file,
-so your normal PagerMon server is unaffected.
+**B. Read PagerMon's database directly.** Point Pager at PagerMon's own SQLite
+`messages.db` (e.g. `…/pagermon/server/messages.db`). Pager opens it
+**read-only**, auto-detects the schema, and polls for new rows — no `reader.sh`
+change needed. The adapter tolerates the variations seen across PagerMon
+versions/forks:
+
+- timestamps in **seconds**, **milliseconds**, or an ISO/text string;
+- the capcode label held inline (`messages.alias`) **or** in the `capcodes`
+  table joined via `alias_id`;
+- alternate column/table names (`address`/`capcode`, `message`/`text`, …);
+- optional `source`/`function` columns present or absent.
+
+In Settings → Ingest source, set the DB path and click **Probe database** to see
+the detected mapping and a sample of recent rows. If a fork isn't recognised, a
+**Manual column mapping** override box lets you wire it up by hand.
+
+Either way Pager only *reads* PagerMon's data and runs side by side, so your
+normal PagerMon server is unaffected.
 
 ## Web UI
 
@@ -142,6 +160,11 @@ uvicorn app.main:app --reload --port 8080
 
 ```bash
 python tests/test_pipeline.py
+python tests/test_pagermon_db.py
+python tests/test_default_template.py
 ```
 
-Covers POCSAG parsing, rule extraction, PDF rendering, and print gating.
+`test_pipeline.py` covers POCSAG parsing, rule extraction, PDF rendering, and
+print gating. `test_pagermon_db.py` covers the PagerMon-DB ingest adapter across
+schema variations (timestamp units, FK-vs-inline alias, renamed columns,
+incremental reads, missing file, manual override).

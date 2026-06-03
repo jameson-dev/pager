@@ -14,11 +14,6 @@
   <div id="canvas-wrap">
     <img id="template-img" alt="template preview"
          onerror="window.templateMissing && window.templateMissing();">
-    <div id="no-template" style="display:none">
-      <span>No template uploaded. Set <code>template_pdf</code> in Settings (and
-      install poppler for a preview image). You can still position fields on the
-      blank page below.</span>
-    </div>
     <!-- Shapes (rects/lines) render below the field overlay. -->
     <div id="shape-overlay"></div>
     <div id="overlay"></div>
@@ -41,24 +36,37 @@
   <div class="side">
     <!-- Compact tool strip: tools + add buttons. -->
     <div class="tool-strip">
-      <div class="draw-tools">
-        <button id="tool-box" class="tool" title="Draw a box (click to toggle)">▭ Box</button>
-        <button id="tool-line" class="tool" title="Draw a line (click to toggle)">／ Line</button>
-        <button id="add-outline" class="tool" title="Add a full-page border">▢ Outline</button>
+      <div class="tool-group">
+        <span class="tool-group-label">Add</span>
+        <div class="add-row">
+          <select id="new-field-name" title="Field to add"></select>
+          <button id="add-field" title="Add the selected field">+ Field</button>
+          <button id="add-custom-text" title="Add a static text label">+ Text</button>
+        </div>
       </div>
-      <div class="add-row">
-        <select id="new-field-name" title="Field to add"></select>
-        <button id="add-field" title="Add the selected field">+ Field</button>
-        <button id="add-custom-text" title="Add a static text label">+ Text</button>
+
+      <div class="tool-group">
+        <span class="tool-group-label">Draw</span>
+        <div class="draw-tools">
+          <button id="tool-box" class="tool" title="Draw a box (click to toggle)">▭ Box</button>
+          <button id="tool-line" class="tool" title="Draw a line (click to toggle)">／ Line</button>
+          <button id="add-outline" class="tool" title="Add a full-page border">▢ Outline</button>
+        </div>
       </div>
-      <label class="toggle grid-toggle">
-        <input type="checkbox" id="grid-toggle" checked>
-        <span>Snap to grid</span>
-        <input type="number" id="grid-size" value="10" min="2" max="50" title="Grid size (PDF points)">
-        <span class="muted">pt</span>
-      </label>
-      <p class="hint" id="draw-hint" style="display:none">Click and drag on the page to draw. Esc to cancel.</p>
-      <p class="hint" id="fields-hint"></p>
+
+      <div class="tool-group tool-group-inline">
+        <label class="toggle grid-toggle">
+          <input type="checkbox" id="grid-toggle" checked>
+          <span>Snap to grid</span>
+        </label>
+        <span class="grid-size-wrap">
+          <input type="number" id="grid-size" value="10" min="2" max="50" title="Grid size (PDF points)">
+          <span class="muted">pt</span>
+        </span>
+      </div>
+
+      <p class="hint tool-hint" id="draw-hint" style="display:none">Click and drag on the page to draw. Esc to cancel.</p>
+      <p class="hint tool-hint" id="fields-hint"></p>
     </div>
 
     <!-- Object list with a filter (All / Fields / Shapes). Click to select. -->

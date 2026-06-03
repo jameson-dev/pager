@@ -92,6 +92,24 @@ def _draw_shapes(c, shapes: list[dict]) -> None:
             c.line(float(s["x1"]), float(s["y1"]), float(s["x2"]), float(s["y2"]))
 
 
+def make_blank_pdf(out_path: str, page_size=A4) -> str:
+    """Write a single blank white page to `out_path`.
+
+    This backs the built-in default template: a fresh install gets a usable,
+    correctly-sized white page so fields/shapes can be placed (and previewed)
+    without anyone having to upload a PDF first. Returns out_path.
+    """
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    c = canvas.Canvas(out_path, pagesize=page_size)
+    # An explicitly white-filled page (not just an empty one) so the preview
+    # image and any printer render a clean white sheet rather than transparency.
+    c.setFillColorRGB(1, 1, 1)
+    c.rect(0, 0, page_size[0], page_size[1], stroke=0, fill=1)
+    c.showPage()
+    c.save()
+    return out_path
+
+
 def _build_overlay(layout: dict, context: dict, page_size=None) -> io.BytesIO:
     """Create an in-memory PDF containing just the placed text.
 

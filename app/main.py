@@ -23,10 +23,13 @@ from . import pdfgen
 from . import poppler
 from . import printing
 from . import processor
+from . import pagermon_db
 from .cleanup import CleanupWorker
 from .database import JobStore
+from .pagermon_watcher import PagerMonDbWatcher
+from . import retry as retry_mod
 from .processor import inject_test_page, reprint_job
-from .retry import MAX_ATTEMPTS, RetryWorker
+from .retry import RetryWorker, configured_max_attempts
 from .watcher import LogWatcher
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -57,6 +60,7 @@ async def _auth_gate(request: Request, call_next):
 
 _store: JobStore | None = None
 _watcher: LogWatcher | None = None
+_db_watcher: PagerMonDbWatcher | None = None
 _retry: RetryWorker | None = None
 _cleanup: CleanupWorker | None = None
 _watchdog: notify.WatchdogNotifier | None = None
@@ -67,13 +71,24 @@ def store() -> JobStore:
     return _store
 
 
+def _ingest_source(conf: dict) -> str:
+    """Which ingest source is active: 'log' (default) or 'pagermon_db'."""
+    src = (conf.get("ingest_source") or "log").strip().lower()
+    return src if src in ("log", "pagermon_db") else "log"
+
+
 @app.on_event("startup")
 def _startup() -> None:
-    global _store, _watcher, _retry, _cleanup, _watchdog
+    global _store, _watcher, _db_watcher, _retry, _cleanup, _watchdog
+    cfg.ensure_default_template()  # blank built-in template for a from-scratch build
     conf = cfg.load_config()
     _store = JobStore(conf.get("database", "data/jobs.db"))
-    _watcher = LogWatcher(conf.get("log_file", "/var/log/pagermon/multimon.log"), _store)
-    _watcher.start()
+    if _ingest_source(conf) == "pagermon_db":
+        _db_watcher = PagerMonDbWatcher(conf.get("pagermon_db_path", ""), _store)
+        _db_watcher.start()
+    else:
+        _watcher = LogWatcher(conf.get("log_file", "/var/log/pagermon/multimon.log"), _store)
+        _watcher.start()
     _retry = RetryWorker(_store)
     _retry.start()
     processor.retry_worker = _retry  # let the processor nudge retries
@@ -87,18 +102,35 @@ def _startup() -> None:
 def _apply_runtime_config(conf: dict) -> None:
     """Apply config changes that affect running workers without a restart.
 
-    - log_file: the watcher switches to the new path live.
+    - ingest_source: start/stop the log vs PagerMon-DB watcher to match.
+    - log_file / pagermon_db_path: the active watcher switches path live.
     - output_dir / database / timezone: read fresh per-page, so no action needed.
     """
-    if _watcher is not None:
+    global _watcher, _db_watcher
+    want = _ingest_source(conf)
+
+    if want == "pagermon_db":
+        if _watcher is not None:
+            _watcher.stop(); _watcher = None
+        path = conf.get("pagermon_db_path", "")
+        if _db_watcher is None:
+            _db_watcher = PagerMonDbWatcher(path, store()); _db_watcher.start()
+        else:
+            _db_watcher.set_path(path)
+    else:  # log
+        if _db_watcher is not None:
+            _db_watcher.stop(); _db_watcher = None
         new_log = conf.get("log_file")
-        if new_log:
+        if _watcher is None:
+            _watcher = LogWatcher(new_log or "/var/log/pagermon/multimon.log", store())
+            _watcher.start()
+        elif new_log:
             _watcher.set_path(new_log)
 
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
-    for w in (_watcher, _retry, _cleanup, _watchdog):
+    for w in (_watcher, _db_watcher, _retry, _cleanup, _watchdog):
         if w:
             w.stop()
 
@@ -291,8 +323,9 @@ async def api_events(request: Request):
 @app.get("/api/health")
 def api_health():
     conf = cfg.load_config()
+    max_attempts = configured_max_attempts(conf)
     snap = events.health.snapshot(int(conf.get("watchdog_stale_seconds", 3600)))
-    snap["failed_prints"] = store().count_failed_unresolved(MAX_ATTEMPTS)
+    snap["failed_prints"] = store().count_failed_unresolved(max_attempts)
     snap["cups_available"] = printing.cups_available()
     return snap
 
@@ -300,10 +333,11 @@ def api_health():
 # ----------------------------------------------------------------------------- print retry
 @app.get("/api/prints/failed")
 def api_failed_prints():
+    max_attempts = configured_max_attempts()
     return {
-        "count": store().count_failed_unresolved(MAX_ATTEMPTS),
-        "jobs": store().list_failed_unresolved(MAX_ATTEMPTS),
-        "max_attempts": MAX_ATTEMPTS,
+        "count": store().count_failed_unresolved(max_attempts),
+        "jobs": store().list_failed_unresolved(max_attempts),
+        "max_attempts": max_attempts,
     }
 
 
@@ -311,13 +345,14 @@ def api_failed_prints():
 def api_retry_all():
     s = store()
     conf = cfg.load_config()
+    max_attempts = configured_max_attempts(conf)
     printer = conf.get("printer_name", "")
     results = []
-    for job in s.list_failed_unresolved(MAX_ATTEMPTS):
+    for job in s.list_failed_unresolved(max_attempts):
         ok, err = printing.print_pdf(printer, job["pdf_path"], title=f"Retry {job['capcode']}")
         s.update_print_result(job["id"], ok, err, (job.get("print_attempts") or 0) + 1)
         results.append({"job_id": job["id"], "ok": ok, "error": err})
-    failed = s.count_failed_unresolved(MAX_ATTEMPTS)
+    failed = s.count_failed_unresolved(max_attempts)
     events.publish("print_status", {"failed": failed})
     return {"results": results, "remaining_failed": failed}
 
@@ -420,7 +455,14 @@ def _redact(conf: dict) -> dict:
 
 @app.get("/api/config")
 def api_get_config():
-    return _redact(cfg.load_config())
+    conf = _redact(cfg.load_config())
+    # Surface effective defaults for keys a fresh config may omit, so the
+    # Settings form always shows a concrete value (single source of truth — the
+    # UI doesn't hard-code its own copy of these defaults).
+    conf.setdefault("database", "data/jobs.db")
+    conf.setdefault("print_max_attempts", retry_mod.DEFAULT_MAX_ATTEMPTS)
+    conf.setdefault("print_retry_interval_seconds", retry_mod.DEFAULT_RETRY_INTERVAL_SECONDS)
+    return conf
 
 
 class ConfigPatch(BaseModel):
@@ -432,7 +474,13 @@ class ConfigPatch(BaseModel):
     templates: list | None = None
     active_template: str | None = None
     log_file: str | None = None
+    ingest_source: str | None = None
+    pagermon_db_path: str | None = None
+    pagermon_db_mapping: dict | None = None
     output_dir: str | None = None
+    database: str | None = None
+    print_max_attempts: int | None = None
+    print_retry_interval_seconds: int | None = None
     alert_enabled_default: bool | None = None
     watchdog_stale_seconds: int | None = None
     retention_days: int | None = None
@@ -448,10 +496,30 @@ def api_patch_config(patch: ConfigPatch):
     conf = cfg.load_config()
     for k, v in patch.model_dump(exclude_none=True).items():
         conf[k] = v
+    # The built-in default template can't be deleted: if a templates update
+    # dropped it, re-insert it so it always survives (and stays protected).
+    if "templates" in patch.model_dump(exclude_none=True):
+        conf["templates"] = _preserve_protected_templates(conf.get("templates") or [])
     cfg.save_config(conf)
     # Apply runtime changes that depend on config (watcher path, etc.).
     _apply_runtime_config(conf)
     return conf
+
+
+def _preserve_protected_templates(incoming: list) -> list:
+    """Ensure the protected default template stays in the list even if a client
+    submitted a templates array without it (or stripped its protected flag)."""
+    saved = cfg.load_config().get("templates") or []
+    protected = [t for t in saved if t.get("protected")]
+    out = list(incoming)
+    for p in protected:
+        match = next((t for t in out if t.get("name") == p.get("name")), None)
+        if match is None:
+            out.insert(0, p)               # was deleted — put it back
+        else:
+            match["path"] = p["path"]       # keep its real path
+            match["protected"] = True       # keep it protected
+    return out
 
 
 # ----------------------------------------------------------------------------- layout API
@@ -637,6 +705,39 @@ def api_test_rules(body: TestRule):
     each rule captures."""
     rules = body.rules if body.rules is not None else cfg.load_rules().get("rules", [])
     return parsermod.diagnose_rules(body.message, rules)
+
+
+# ----------------------------------------------------------------------------- PagerMon DB source
+class ProbeReq(BaseModel):
+    path: str | None = None
+    mapping: dict | None = None
+
+
+@app.post("/api/pagermon-db/probe")
+def api_pagermon_db_probe(body: ProbeReq):
+    """Inspect a PagerMon SQLite DB and report the auto-detected column mapping,
+    plus a small sample of recent rows as they'd be ingested. Drives the
+    Settings -> PagerMon DB panel so a user can confirm or override the mapping."""
+    conf = cfg.load_config()
+    path = (body.path if body.path is not None else conf.get("pagermon_db_path")) or ""
+    override = body.mapping if body.mapping is not None else conf.get("pagermon_db_mapping")
+    m = pagermon_db.probe_schema(path, override)
+    sample = []
+    if m.detected:
+        try:
+            latest = pagermon_db.latest_id(path, m)
+            # Pull the few most-recent rows: read from just below the high id.
+            rows, _ = pagermon_db.fetch_new(path, m, max(0, latest - 5))
+            for _rid, page, alias in rows[-5:]:
+                sample.append({
+                    "capcode": page.capcode,
+                    "message": page.message[:120],
+                    "received_at": page.received_at.isoformat(timespec="seconds"),
+                    "alias": alias,
+                })
+        except Exception as exc:  # noqa: BLE001
+            m.note += f" (sample failed: {exc})"
+    return {"path": path, "mapping": m.to_dict(), "sample": sample}
 
 
 # ----------------------------------------------------------------------------- printers API

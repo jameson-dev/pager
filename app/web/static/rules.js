@@ -25,6 +25,17 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// match_keywords may arrive as an array (saved config) or a raw string (typed in
+// the input). Normalise both directions.
+function keywordsToText(kw) {
+  if (Array.isArray(kw)) return kw.join(", ");
+  return kw || "";
+}
+function keywordsToArray(kw) {
+  if (Array.isArray(kw)) return kw.filter(Boolean);
+  return (kw || "").split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+}
+
 // ----------------------------------------------------------------- rules table
 function render() {
   tbody.innerHTML = "";
@@ -36,6 +47,10 @@ function render() {
         <button data-down="${i}" title="Move down" ${i === rules.rules.length - 1 ? "disabled" : ""}>▼</button>
       </td>
       <td><input value="${esc(r.name)}" data-i="${i}" data-k="name"></td>
+      <td><input class="kw-input" value="${esc(keywordsToText(r.match_keywords))}"
+                 data-i="${i}" data-k="match_keywords" spellcheck="false"
+                 placeholder="e.g. CFSRES, INC:">
+          <div class="kw-state" data-kw="${i}"></div></td>
       <td><input class="pattern-input" style="width:100%" value="${esc(r.pattern)}"
                  data-i="${i}" data-k="pattern" spellcheck="false">
           <div class="pattern-err" data-err="${i}"></div></td>
@@ -98,12 +113,14 @@ function renderPreview(diag) {
   const msg = diag.message || "";
 
   if (diag.matched_index === null || diag.matched_index === undefined) {
-    winner.textContent = "— no rule matched";
+    winner.textContent = diag.selection_reason ? `— ${diag.selection_reason}` : "— no rule matched";
     preview.innerHTML = `<span class="nomatch-text">${esc(msg)}</span>`;
     return;
   }
   const rule = diag.rules[diag.matched_index];
-  winner.textContent = `— matched by “${esc(rule.name)}”`;
+  // Show both WHICH rule and WHY it was chosen (the selector reason).
+  winner.textContent = `— matched by “${esc(rule.name)}”`
+    + (diag.selection_reason ? ` · ${esc(diag.selection_reason)}` : "");
 
   // Build non-overlapping highlighted segments from the winning rule's groups.
   const groups = rule.groups
@@ -142,6 +159,10 @@ function renderDiagnostics(diag) {
     } else if (r.status === "empty") {
       badge = `<span class="badge muted-badge">empty</span>`;
       detail = `<span class="diag-detail muted">no pattern</span>`;
+    } else if (r.status === "skipped") {
+      // Selector excluded this rule: its keywords weren't found in the message.
+      badge = `<span class="badge skipped">skipped</span>`;
+      detail = `<span class="diag-detail muted">no keyword in message (${esc((r.keywords || []).join(", ")) || "—"})</span>`;
     } else if (r.status === "match") {
       badge = isWinner
         ? `<span class="badge win">✓ matched (used)</span>`
@@ -149,11 +170,20 @@ function renderDiagnostics(diag) {
       const names = r.groups.map(g => g.name).join(", ") || "no named groups";
       detail = `<span class="diag-detail">${esc(names)}</span>`;
     } else {
+      // nomatch: distinguish "keyword hit but regex didn't fit" (likely a
+      // malformed page of this format) from a plain non-match.
+      const hint = r.keyword_hit
+        ? `<span class="diag-detail warn">keyword “${esc(r.keyword_hit)}” matched but pattern didn’t fit</span>`
+        : "";
       badge = `<span class="badge no">no match</span>`;
-      detail = "";
+      detail = hint;
     }
+    // Small keyword tag so the selector is visible at a glance per rule.
+    const kwTag = (r.keywords && r.keywords.length)
+      ? `<span class="kw-chip" title="Applies when message contains one of these">🔑 ${esc(r.keywords.join(", "))}</span>`
+      : `<span class="kw-chip muted" title="No keywords — considered for every message">any</span>`;
     li.className = "diag-item" + (isWinner ? " winner" : "");
-    li.innerHTML = `<b>${esc(r.name)}</b> ${badge} ${detail}`;
+    li.innerHTML = `<b>${esc(r.name)}</b> ${badge} ${kwTag} ${detail}`;
     ul.appendChild(li);
   });
 }
@@ -170,6 +200,20 @@ function annotateRows(diag) {
     const patInput = tbody.querySelector(`.pattern-input[data-i="${r.index}"]`);
     if (errEl) errEl.textContent = r.status === "error" ? r.error : "";
     if (patInput) patInput.classList.toggle("invalid", r.status === "error");
+    // Keyword-state line: does the selector admit the current sample message?
+    const kwEl = tbody.querySelector(`[data-kw="${r.index}"]`);
+    if (kwEl) {
+      if (!r.keywords || !r.keywords.length) {
+        kwEl.textContent = "applies to all messages";
+        kwEl.className = "kw-state muted";
+      } else if (r.keyword_hit) {
+        kwEl.textContent = `✓ “${r.keyword_hit}” in sample`;
+        kwEl.className = "kw-state ok-text";
+      } else {
+        kwEl.textContent = "not in sample → skipped";
+        kwEl.className = "kw-state warn";
+      }
+    }
     renderGroupAssign(r);
   });
 }
@@ -270,6 +314,8 @@ document.getElementById("add-rule").addEventListener("click", () => {
 function cleanRules() {
   return { rules: rules.rules.map(r => {
     const o = { name: r.name, pattern: r.pattern };
+    const kws = keywordsToArray(r.match_keywords);
+    if (kws.length) o.match_keywords = kws;
     if (r.jobtype_default) o.jobtype_default = r.jobtype_default;
     const groups = Object.fromEntries(
       Object.entries(r.groups || {}).filter(([, v]) => v));
